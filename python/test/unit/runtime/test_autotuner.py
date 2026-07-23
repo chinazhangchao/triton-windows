@@ -6,7 +6,7 @@ import pytest
 
 import pathlib
 import uuid
-from triton._internal_testing import is_cuda, is_hip_cdna2
+from triton._internal_testing import is_cuda, is_hip_cdna2, is_rubin
 
 
 def do_bench(kernel_call, quantiles, use_cuda_graph=False):
@@ -261,6 +261,14 @@ def test_prune_configs_fractional_top_k_keeps_one(device: str):
     grid = lambda META: (triton.cdiv(N, META['BLOCK_SIZE']), )
     _kernel[grid](dst, src, N=N)
     torch.testing.assert_close(src, dst)
+
+
+def test_config_ir_override_changes_disk_cache_key():
+    # Autotuner derives persisted result-cache keys from Config.__str__().
+    first = triton.Config(kwargs={"BLOCK_SIZE": 32}, ir_override="first.ttir")
+    second = triton.Config(kwargs={"BLOCK_SIZE": 32}, ir_override="second.ttir")
+
+    assert str(first) != str(second)
 
 
 @pytest.mark.parametrize("prune_kind", ["early_config_prune", "perf_model"])
@@ -539,9 +547,10 @@ def test_exceed_tmem(device):
         tl.store(dst + tl.arange(0, BLOCK_SIZE * BLOCK_SIZE), c)
 
     dot_kernel[(1, )](dst)
+    tmem_size = 576 if is_rubin() else 512
     assert exception_out_of_resource is not None and str(
         exception_out_of_resource
-    ) == "out of resource: tensor memory, Required: 640, Hardware limit: 512. Reducing block sizes or `num_stages` may help."
+    ) == f"out of resource: tensor memory, Required: 640, Hardware limit: {tmem_size}. Reducing block sizes or `num_stages` may help."
 
 
 def test_exceed_threads(device):

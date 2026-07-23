@@ -231,12 +231,28 @@ Type WaitBarrierOp::getPredicateOperandTypeLike() {
   return IntegerType::get(getContext(), 1);
 }
 
+static LogicalResult verifyBarrierCGALayout(Operation *op, Value barrier,
+                                            CGAEncodingAttr expectedCGALayout,
+                                            StringRef barrierName);
+
 // -- ArriveBarrierOp --
 LogicalResult ArriveBarrierOp::verify() {
   if (failed(verifyBarrierType(*this, getAlloc().getType())))
     return failure();
   if (getCount() < 1)
     return emitOpError("count must be greater than or equal to 1");
+  if (isMulticast()) {
+    int numCTAs = triton::gpu::lookupNumCTAs(getOperation());
+    if (numCTAs <= 1)
+      return emitOpError("multicast arrive requires num_ctas > 1");
+    if (getCtaMask() > static_cast<uint32_t>(numCTAs - 1))
+      return emitOpError("ctaMask exceeds numCTAs - 1");
+    auto expectedCGALayout =
+        CGAEncodingAttr::get1DLayout(getContext(), numCTAs);
+    if (failed(verifyBarrierCGALayout(*this, getAlloc(), expectedCGALayout,
+                                      "multicast barrier")))
+      return failure();
+  }
   return success();
 }
 
@@ -1116,6 +1132,28 @@ static LogicalResult verifyScaledLHSOperand(Operation *op, Type elementType,
   return op->emitOpError("unsupported LHS operand type for scaled MMA");
 }
 
+static LogicalResult
+verifyScaleBlockRepOrder(TCGen5MMAScaledOp op,
+                         TensorMemoryScalesEncodingAttr encoding, bool isA) {
+  auto aScaleType = cast<MemDescType>(op.getAScale().getType());
+  auto bScaleType = cast<MemDescType>(op.getBScale().getType());
+  auto expectedOrder = getTensorMemoryScalesBlockRepOrder(
+      op.getOperation(), isA, op.getAType(), op.getBType(),
+      aScaleType.getElementType(), bScaleType.getElementType());
+  if (encoding.getBlockRepOrder() != expectedOrder) {
+    StringRef operandName = isA ? "A" : "B";
+    StringRef expectedOrderName =
+        expectedOrder == TensorMemoryScalesBlockRepOrder::K_THEN_MN ? "kThenMn"
+                                                                    : "mnThenK";
+    return op.emitOpError()
+           << operandName
+           << " scales in tensor memory must use "
+              "#ttng.tensor_memory_scales_encoding<blockRepOrder = "
+           << expectedOrderName << ">";
+  }
+  return success();
+}
+
 LogicalResult TCGen5MMAScaledOp::verify() {
   if (!getIsAsync() && !getBarriers().empty()) {
     return emitOpError("The op is synchronous but a barrier is present.");
@@ -1150,6 +1188,39 @@ LogicalResult TCGen5MMAScaledOp::verify() {
                                       getAType(), getBType())))
       return failure();
   }
+  auto aScaleType = cast<MemDescType>(getAScale().getType());
+  auto bScaleType = cast<MemDescType>(getBScale().getType());
+  auto isScaleBlockRepOrderRelevant = [](MemDescType scaleType) {
+    auto shapePerCTA = getShapePerCTA(scaleType);
+    assert(shapePerCTA.size() >= 2);
+    int64_t rowsPerCTA = shapePerCTA[shapePerCTA.size() - 2];
+    int64_t scalesPerCTA = shapePerCTA.back();
+    // The ordering is relevant only when there are multiple 128x4 scale blocks
+    // from both MN and K dimensions.
+    return rowsPerCTA > 128 && scalesPerCTA > 4;
+  };
+  auto verifyScaleEncoding = [&](MemDescType scaleType,
+                                 bool isA) -> LogicalResult {
+    if (!isa<TensorMemorySpaceAttr>(scaleType.getMemorySpace()))
+      return success();
+    bool isOrderRelevant = isScaleBlockRepOrderRelevant(scaleType);
+    auto encoding =
+        dyn_cast<TensorMemoryScalesEncodingAttr>(scaleType.getEncoding());
+    if (!encoding) {
+      if (!isOrderRelevant)
+        return success();
+      return emitOpError() << (isA ? "A" : "B")
+                           << " scales in tensor memory must use "
+                              "#ttng.tensor_memory_scales_encoding";
+    }
+    if (!isOrderRelevant && encoding.getBlockRepOrder() ==
+                                TensorMemoryScalesBlockRepOrder::MN_THEN_K)
+      return success();
+    return verifyScaleBlockRepOrder(*this, encoding, isA);
+  };
+  if (failed(verifyScaleEncoding(aScaleType, /*isA=*/true)) ||
+      failed(verifyScaleEncoding(bScaleType, /*isA=*/false)))
+    return failure();
   return success();
 }
 
@@ -1426,29 +1497,10 @@ LogicalResult TMEMLoadOp::verify() {
 
   // Validate reduction conditions
   if (redOp) {
-    auto regTy = getType();
-    auto memTy = getSrc().getType();
     auto maxnreg = getContextualMaxNReg(*this);
-    auto encodingInfoOr = computeTMemLdStEncodingInfo(regTy, memTy, maxnreg);
-    if (failed(encodingInfoOr))
-      return emitOpError("failed to compute TMEM encoding info");
-
-    if (encodingInfoOr->unpacked)
-      return emitOpError(
-          "tmem_load reduction requires packed format (unpacked=false)");
-
-    // Verify that N dimension is in registers entirely, and is not sharded
-    // across threads. This could be relaxed in the future to only reduce the
-    // kReg bases along N then cross-warp/block reduction becomes needed.
-    auto kReg = StringAttr::get(regTy.getContext(), "register");
-    int dimM = 0, dimN = 1;
-    auto regDims =
-        toLinearEncoding(regTy).basesPerDim(kReg, /*skipBroadcast=*/true);
-    if (regDims[dimN] != toLinearLayout(regTy).getOutDimSizes().begin()[dimN] ||
-        regDims[dimM] != 1) {
-      return emitOpError("tmem_load reduction with N dimension sharded across "
-                         "threads is not supported.");
-    }
+    if (!supportsTMemLoadReduce(getType(), getSrc().getType(), maxnreg,
+                                [&]() { return emitOpError(); }))
+      return failure();
   }
 
   return triton::gpu::verifyMemoryOpTypes(*this, getSrc().getType(), getType());
@@ -1545,6 +1597,15 @@ LogicalResult TMEMCopyOp::verify() {
     if (srcTy.getElementType().getIntOrFloatBitWidth() != 32) {
       return emitOpError("Source element type should be 32-bit.");
     }
+    auto kCol = StringAttr::get(getContext(), "col");
+    auto colBases = tmemLl.getBases().lookup(kCol);
+    auto firstHole = llvm::find_if(colBases, [](ArrayRef<int32_t> basis) {
+      return llvm::all_of(basis,
+                          [](int32_t component) { return component == 0; });
+    });
+    if (std::distance(colBases.begin(), firstHole) < 2)
+      return emitOpError("The destination must have at least 128 contiguous "
+                         "bits per TMEM row.");
   }
   // Given that we want to support flexible input SMEM shapes, kinds of shape
   // checking we can do here are limited. For simplicity, shape checking is
@@ -1580,27 +1641,48 @@ LogicalResult TMEMSubSliceOp::verify() {
     return emitOpError("The result must be a 2D tensor memory buffer.");
   if (dstTy.getRank() != 2)
     return emitOpError("The result must be a 2D tensor memory buffer.");
-  if (dstTy.getDimSize(0) != srcTy.getDimSize(0))
-    return emitOpError("The result must have the same number of rows as the "
-                       "source.");
-  auto offset = getN();
-  if (offset & (dstTy.getDimSize(1) - 1)) {
+  auto dim = getDim();
+  if (dim < 0 || dim > 1)
+    return emitOpError("The slice dimension must be 0 or 1.");
+  if (dstTy.getDimSize(1 - dim) != srcTy.getDimSize(1 - dim))
+    return emitOpError("The result must have the same size as the source in "
+                       "the dimension that is not being sliced.");
+  auto srcShape = srcTy.getShape();
+  auto dstShape = dstTy.getShape();
+  auto offset = getOffset();
+  if (offset & (dstShape[dim] - 1)) {
     return emitError("The split offset may not touch the tile");
   }
-  if (offset >= srcTy.getDimSize(1)) {
+  if (offset + dstShape[dim] > srcShape[dim]) {
     return emitError("The split offset may not exceed the source shape");
   }
+  auto srcLL = toLinearLayout(srcTy);
+  auto isTrimmed = [&](ArrayRef<int32_t> basis) {
+    return basis[dim] >= dstShape[dim];
+  };
+  auto kBlock = StringAttr::get(getContext(), "block");
+  if (llvm::any_of(srcLL.getBases().lookup(kBlock), isTrimmed))
+    return emitOpError("The result may not be sliced across CTAs.");
+
+  auto dims = standardOutDimNames(getContext(), 2);
+  auto logical = static_cast<int32_t>(offset);
+  SmallVector<std::pair<StringAttr, int32_t>> logicalOffset = {
+      {dims[0], dim == 0 ? logical : 0}, {dims[1], dim == 1 ? logical : 0}};
+  auto rowCol = srcLL.pseudoinvert().apply(logicalOffset);
+  if (uint64_t(rowCol[1].second) * srcTy.getElementTypeBitWidth() % 32 != 0)
+    return emitOpError(
+        "The split offset must be 32-bit aligned in tensor memory.");
 
   return success();
 }
 
 void TMEMSubSliceOp::build(OpBuilder &builder, OperationState &state,
-                           Value alloc, int offset, int size) {
+                           Value alloc, int offset, int size, int dim) {
   auto allocTy = cast<triton::gpu::MemDescType>(alloc.getType());
   SmallVector<int64_t> shape(allocTy.getShape());
-  shape.back() = size;
+  shape[dim] = size;
   auto subsliceType = allocTy.cloneWith(shape, allocTy.getElementType());
-  build(builder, state, subsliceType, alloc, offset);
+  build(builder, state, subsliceType, alloc, offset, dim);
 }
 
 // -- TensormapCreateOp --

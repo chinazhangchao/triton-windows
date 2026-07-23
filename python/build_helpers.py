@@ -449,11 +449,8 @@ def _get_thirdparty_package_cmake_vars(package: Package, helper_args: BuildHelpe
     if package.syspath_var_name:
         cmake_vars[package.syspath_var_name] = package_dir
     if package.package == "llvm":
-        cmake_vars.update({
-            "LLVM_DIR": f"{package_dir}/lib/cmake/llvm",
-            "MLIR_DIR": f"{package_dir}/lib/cmake/mlir",
-            "LLD_DIR": f"{package_dir}/lib/cmake/lld",
-        })
+        for name in ["llvm", "mlir", "lld"]:
+            cmake_vars[f"{name.upper()}_DIR"] = f"{package_dir}/lib/cmake/{name}"
     return cmake_vars
 
 
@@ -493,9 +490,11 @@ def write_thirdparty_cmake_vars(output: str, packages: list[str], helper_args: B
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as output_file:
         for key, value in sorted(cmake_vars.items()):
-            if key in _LLVM_CMAKE_CACHE_VARS:
-                # Switching LLVM revisions must not leave stale CMake package paths behind.
+            if key != "LLVM_SYSPATH" and key.startswith(("LLVM_", "MLIR_", "LLD_")):
                 output_file.write(f'set({key} "{_cmake_escape(value)}" CACHE PATH "Resolved {key}" FORCE)\n')
+                continue
+            if key == "LLVM_SYSPATH":
+                output_file.write(f'set({key} "{_cmake_escape(value)}")\n')
                 continue
             output_file.write(f'if(NOT DEFINED {key} OR "${{{key}}}" STREQUAL "")\n')
             output_file.write(f'  set({key} "{_cmake_escape(value)}")\n')
@@ -657,7 +656,9 @@ def download_and_copy_dependencies(helper_args: BuildHelperArgs):
             override_path=None,
             version="",
             url_func=lambda system, arch, version:
-            "https://github.com/chinazhangchao/triton-windows/releases/download/triton_win_arm64-3.8.0/tcc-windows-arm64-d9d02c5.zip",
+            "https://github.com/chinazhangchao/triton-windows/releases/download/triton_win_arm64-3.8.0/tcc-windows-arm64-d9d02c5.zip"
+            if arch == "arm64" else
+            "https://github.com/woct0rdho/tinycc/releases/download/v0.9.28rc-05bb793/tcc-0.9.28rc-05bb793.zip",
             helper_args=helper_args,
         )
 

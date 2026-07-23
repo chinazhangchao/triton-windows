@@ -372,6 +372,14 @@ def TTNG_ArriveBarrierOp : TTNG_Op<"arrive_barrier", [
     of at least 1 and decreases the pending arrival count of the mbarrier by
     the specified count.
 
+    When `ctaMask` is non-zero, the arrive is multicast across the cluster.
+    Each bit set in the mask identifies a CTA ID dimension to multicast
+    along. CTA IDs `a` and `b` belong to the same equivalence class iff
+    `a & ~ctaMask == b & ~ctaMask`; all CTAs in a class multicast to each
+    other. Multicast requires `numCTAs > 1`, `0 < ctaMask <= numCTAs - 1`,
+    and the barrier must have the identity CGA layout `[[1], [2], ...]`. The
+    default value of `ctaMask` is 0 (no multicast).
+
     The operation accepts an optional predicate.
 
     Example:
@@ -379,12 +387,14 @@ def TTNG_ArriveBarrierOp : TTNG_Op<"arrive_barrier", [
     ```mlir
     ttng.arrive_barrier %barrier, 2 : !ttg.memdesc<1xi64, #shared, #smem, mutable>
     ttng.arrive_barrier %barrier, 1, %pred : !ttg.memdesc<1xi64, #shared, #smem, mutable>
+    ttng.arrive_barrier %barrier, 1 {ctaMask = 1 : i32} : !ttg.memdesc<2xi64, #shared, #smem, mutable>
     ```
   }];
 
   let arguments = (ins
     Arg<TTG_MemDescType, "", [MemRead<SharedMemory>, MemWrite<SharedMemory>]>:$alloc,
     I32Attr:$count,
+    DefaultValuedOptionalAttr<I32Attr, "0">:$ctaMask,
     Optional<I1>:$pred
   );
 
@@ -394,9 +404,16 @@ def TTNG_ArriveBarrierOp : TTNG_Op<"arrive_barrier", [
 
   let builders = [
     OpBuilder<(ins "Value":$alloc, "uint32_t":$count), [{
-      return build($_builder, $_state, alloc, count, /*pred=*/Value());
+      build($_builder, $_state, alloc, count, /*ctaMask=*/0u, /*pred=*/Value());
+    }]>,
+    OpBuilder<(ins "Value":$alloc, "uint32_t":$count, "Value":$pred), [{
+      build($_builder, $_state, alloc, count, /*ctaMask=*/0u, pred);
     }]>
   ];
+
+  let extraClassDeclaration = [{
+    bool isMulticast() { return getCtaMask() != 0; }
+  }];
 
   let hasVerifier = 1;
 }
@@ -984,18 +1001,18 @@ def TTNG_TMEMSubSliceOp : TTNG_Op<"tmem_subslice", [Pure,
   let description = [{
     This operation takes a subslice of a tensor memory allocation and returns a
     new descriptor containing the address and a view of the subslice.
-    This is similar to ttg.memdesc_subslice except we can only slice along the
-    inner dimension of a 2D memdesc, as this is the only supported slice for
-    TMEM.
+    This is similar to ttg.memdesc_subslice and can slice either dimension of a
+    2D tensor memory descriptor, including non-contiguous views within a CTA.
   }];
-  let arguments = (ins TTG_MemDescType:$src, I32Attr:$N);
+  let arguments = (ins TTG_MemDescType:$src, I32Attr:$offset,
+                       DefaultValuedAttr<I32Attr, "1">:$dim);
 
   let assemblyFormat = [{
     $src attr-dict `:` qualified(type($src)) `->` qualified(type($result))
   }];
 
   let builders = [
-      OpBuilder<(ins "Value":$alloc, "int":$offset, "int":$size)>,
+      OpBuilder<(ins "Value":$alloc, "int":$offset, "int":$size, "int":$dim)>,
     ];
   let results = (outs TTG_MemDescType:$result);
   let hasVerifier = 1;
@@ -1008,6 +1025,8 @@ def TTNG_TMEMCopyOp : TTNG_Op<"tmem_copy"> {
     2D blocks stored contiguously in SMEM are copied into TMEM as specified by the destination address.
     This op lowers to the PTX instruction tcgen05.cp. This supports writing to
     the scales TMEM layout as well as the default TMEM layout.
+    For the default layout, each contiguous TMEM row segment must contain at
+    least 128 bits, the minimum width supported by tcgen05.cp.
     Currently, the semantics are different when writing to the TMEM scale layout.
 
     In the case of the default layout, the copy doesn't change the logical

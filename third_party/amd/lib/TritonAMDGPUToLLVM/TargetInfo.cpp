@@ -170,30 +170,14 @@ Value TargetInfo::getGlobalTimer(RewriterBase &rewriter, Location loc) const {
   Value timer;
   switch (getISAFamily()) {
   case ISAFamily::RDNA3:
-    timer = LLVM::InlineAsmOp::create(
-                rewriter, loc, i64_ty, ValueRange{},
-                "s_sendmsg_rtn_b64 $0, sendmsg(MSG_RTN_GET_REALTIME)\n"
-                "s_waitcnt lgkmcnt(0)",
-                "=r", /*has_side_effects=*/true, /*is_align_stack=*/false,
-                LLVM::TailCallKind::None,
-                LLVM::AsmDialectAttr::get(rewriter.getContext(),
-                                          LLVM::AsmDialect::AD_ATT),
-                ArrayAttr::get(rewriter.getContext(), {}))
-                .getRes();
-    break;
   case ISAFamily::RDNA4:
-  case ISAFamily::GFX1250:
-    timer = LLVM::InlineAsmOp::create(
-                rewriter, loc, i64_ty, ValueRange{},
-                "s_sendmsg_rtn_b64 $0, sendmsg(MSG_RTN_GET_REALTIME)\n"
-                "s_wait_kmcnt 0",
-                "=r", /*has_side_effects=*/true, /*is_align_stack=*/false,
-                LLVM::TailCallKind::None,
-                LLVM::AsmDialectAttr::get(rewriter.getContext(),
-                                          LLVM::AsmDialect::AD_ATT),
-                ArrayAttr::get(rewriter.getContext(), {}))
-                .getRes();
+  case ISAFamily::GFX1250: {
+    Value msg = b.i32_val(/*MSG_RTN_GET_REALTIME=*/131);
+    timer = LLVM::createLLVMIntrinsicCallOp(
+                rewriter, loc, "llvm.amdgcn.s.sendmsg.rtn.i64", i64_ty, {msg})
+                .getResult(0);
     break;
+  }
   default:
     timer = LLVM::createLLVMIntrinsicCallOp(
                 rewriter, loc, "llvm.amdgcn.s.memrealtime", i64_ty, {})

@@ -16,6 +16,7 @@
 #include "llvm/Support/MathExtras.h"
 
 using mlir::triton::nvidia_gpu::TensorMemoryEncodingAttr;
+using mlir::triton::nvidia_gpu::TensorMemoryScalesBlockRepOrder;
 using mlir::triton::nvidia_gpu::TensorMemoryScalesEncodingAttr;
 
 namespace mlir::triton::gpu {
@@ -1252,13 +1253,27 @@ tensorMemoryScalesToLinearLayout(ArrayRef<int64_t> shape,
               LinearLayout::zeros1D(4, kRow, dims[0]) *
               LinearLayout::identity1D(4, kCol, dims[1]) *
               LinearLayout::identity1D(2, kCol, dims[0]);
-  // We choose repOrder = [0, 1]
-  tile *= LinearLayout::identity1D(
-              llvm::divideCeil(shapePerCTA[0], tile.getOutDimSize(dims[0])),
-              kCol, dims[0]) *
-          LinearLayout::identity1D(
-              llvm::divideCeil(shapePerCTA[1], tile.getOutDimSize(dims[1])),
-              kCol, dims[1]);
+  auto repsMn = llvm::divideCeil(shapePerCTA[0], tile.getOutDimSize(dims[0]));
+  auto repsK = llvm::divideCeil(shapePerCTA[1], tile.getOutDimSize(dims[1]));
+
+  if (repsMn > 1) {
+    // blockRepOrder applies after this normalization step. First merge the two
+    // MN-adjacent 64x4 pieces into the repeated scale block, then order the
+    // remaining block repetitions along MN and K.
+    tile *= LinearLayout::identity1D(2, kCol, dims[0]);
+    repsMn /= 2;
+  }
+
+  if (encoding.getBlockRepOrder() ==
+      TensorMemoryScalesBlockRepOrder::K_THEN_MN) {
+    // kThenMn uses repOrder = [1, 0] at the repeated block level.
+    tile *= LinearLayout::identity1D(repsK, kCol, dims[1]) *
+            LinearLayout::identity1D(repsMn, kCol, dims[0]);
+  } else {
+    // mnThenK uses repOrder = [0, 1] at the repeated block level.
+    tile *= LinearLayout::identity1D(repsMn, kCol, dims[0]) *
+            LinearLayout::identity1D(repsK, kCol, dims[1]);
+  }
   // Add a trivial block dimension
   tile *= LinearLayout::identity1D(1, kBlock, dims[0]);
   // See [Zeros in TMEM LinearLayouts]
@@ -1374,10 +1389,30 @@ LinearLayout toLinearLayout(RankedTensorType type) {
 }
 
 LinearLayout toLinearLayout(MemDescType type) {
-  // Pass in the allocation shape. Then when using invertAndCompose it will
-  // trim the allocationShape to the shape if they are different.
-  // We also remove the first dimension of the allocationShape if there was a
-  // call to memdesc_index
+  // For TMEM we instantiate the subview directly. This is possible
+  // as TMEM has no swizzling.
+  if (isa<TensorMemoryEncodingAttr>(type.getEncoding())) {
+    auto shape = type.getShape().take_back(2);
+    auto allocShape = type.getAllocShape().take_back(2);
+    auto ll = toLinearLayout(allocShape, type.getEncoding());
+    auto outDims = llvm::to_vector(ll.getOutDimNames());
+    // Trim the shape
+    for (auto [dim, size] : llvm::zip_equal(outDims, shape))
+      ll = ll.resizeOutDim(dim, size);
+
+    auto kCol = StringAttr::get(type.getContext(), "col");
+    int nColBases = ll.getInDimSizeLog2(kCol);
+    int bitwidth = type.getElementType().getIntOrFloatBitWidth();
+    int minColBases = llvm::Log2_32(32 / bitwidth);
+    while (nColBases > minColBases &&
+           llvm::all_of(ll.getBasis(kCol, nColBases - 1),
+                        [](int32_t v) { return v == 0; }))
+      --nColBases;
+    return ll.resizeInDim(kCol, 1u << nColBases);
+  }
+  // Shared memory needs the allocation shape so that invertAndCompose can trim
+  // subviews. We also remove the first dimension of the allocation shape if
+  // there was a call to memdesc_index.
   auto shape = type.getAllocShape().take_back(type.getRank());
   return toLinearLayout(shape, type.getEncoding());
 }
