@@ -633,6 +633,18 @@ void TritonIntegerRangeAnalysis::initializeFuncOp(tt::FuncOp op) {
   }
 }
 
+// Helper to construct a RegionSuccessor that represents "return to parent".
+// Newer MLIR uses RegionSuccessor(Operation *); older MLIR uses the static
+// RegionSuccessor::parent() factory. We detect which API is available via
+// std::is_constructible so that this code compiles against both versions.
+template <typename T = RegionSuccessor>
+static T makeParentRegionSuccessor(Operation *op) {
+  if constexpr (std::is_constructible_v<T, Operation *>)
+    return T(op);
+  else
+    return T::parent();
+}
+
 void TritonIntegerRangeAnalysis::visitRegionSuccessors(
     ProgramPoint *point, RegionBranchOpInterface branch,
     RegionSuccessor successor,
@@ -720,7 +732,8 @@ void TritonIntegerRangeAnalysis::visitRegionSuccessors(
       if (!point->isBlockStart()) {
         if (!inputs.empty())
           firstIndex = cast<OpResult>(inputs.front()).getResultNumber();
-        RegionSuccessor parentSuccessor(branch.getOperation());
+        auto parentSuccessor =
+            makeParentRegionSuccessor(branch.getOperation());
         SmallVector<Value> nonSuccessorInputs =
             branch.getNonSuccessorInputs(parentSuccessor);
         SmallVector<dataflow::IntegerValueRangeLattice *>
