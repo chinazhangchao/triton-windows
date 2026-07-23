@@ -447,9 +447,7 @@ def indirect_matmul_kernel(
     tl.store(Out_ptrs, acc)
 
 
-# Skip 128x128@128x128 because it's too large on GPU with max_shared_mem = 101376
-# @pytest.mark.parametrize("BLOCK_M, BLOCK_N, BLOCK_K", [(128, 128, 128), (128, 128, 64), (128, 64, 128)])
-@pytest.mark.parametrize("BLOCK_M, BLOCK_N, BLOCK_K", [(128, 128, 64), (128, 64, 128)])
+@pytest.mark.parametrize("BLOCK_M, BLOCK_N, BLOCK_K", [(128, 128, 128), (128, 128, 64), (128, 64, 128)])
 @pytest.mark.parametrize("num_stages", [1, 3, 5])
 def test_indirect_matmul(BLOCK_M, BLOCK_N, BLOCK_K, num_stages, device):
     shared_mem_accum = (BLOCK_K * BLOCK_M + BLOCK_K * BLOCK_N) * num_stages * 2

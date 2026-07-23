@@ -474,16 +474,6 @@ def _cmake_escape(value: str) -> str:
     return value.replace("\\", "/").replace('"', '\\"')
 
 
-_LLVM_CMAKE_CACHE_VARS = {
-    "LLVM_DIR",
-    "LLVM_INCLUDE_DIRS",
-    "LLVM_LIBRARY_DIR",
-    "LLVM_SYSPATH",
-    "MLIR_DIR",
-    "LLD_DIR",
-}
-
-
 def write_thirdparty_cmake_vars(output: str, packages: list[str], helper_args: BuildHelperArgs):
     cmake_vars = get_thirdparty_cmake_vars(packages, helper_args)
     output_path = Path(output)
