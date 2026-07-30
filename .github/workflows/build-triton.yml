@@ -79,7 +79,7 @@ jobs:
             wheel_platform: win_amd64
           - architecture: arm64
             runner: windows-11-arm
-            msvc_arch: arm64_arm64
+            msvc_arch: arm64
             cibw_arch: ARM64
             cibw_build: cp3{11,12,13,14}
             cibw_pre_abi3_build: cp311
