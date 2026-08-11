@@ -1053,8 +1053,7 @@ def test_block_scale_fp4(M, N, K, BLOCK_M, BLOCK_N, BLOCK_K, VEC_SIZE, with_a_sc
     if is_cuda():
         if BLOCK_M < 128 and not pack_along_k:
             pytest.skip("Packing along M/N with BLOCK_M < 128 is not supported on CUDA")
-        if (not pack_along_k and BLOCK_N == 256 and BLOCK_K == 256
-                and torch.cuda.get_device_capability()[0] == 12):
+        if (not pack_along_k and BLOCK_N == 256 and BLOCK_K == 256 and torch.cuda.get_device_capability()[0] == 12):
             pytest.skip("Decomposed path exceeds SMEM capacity on SM12x")
         if scale_type == "float8_e4m3fn" and VEC_SIZE == 32 and not is_rubin:
             pytest.skip("NVFP4 vec32 is only supported on Rubin")
@@ -1390,8 +1389,11 @@ def test_batched_mxfp(BATCH_SIZE, BLOCK_BATCH_SIZE, BLOCK_M, BLOCK_N, BLOCK_K, N
 
     if K % BLOCK_K != 0:
         pytest.skip("Kernel requires shapes aligned by K dimension")
-    if is_cuda() and torch.cuda.get_device_capability()[0] < 10:
-        pytest.skip("Requires compute capability >= 10")
+    if is_cuda():
+        if torch.cuda.get_device_capability()[0] < 10:
+            pytest.skip("Requires compute capability >= 10")
+        if torch.cuda.get_device_capability()[0] == 12 and BLOCK_BATCH_SIZE > 1 and NUM_STAGES > 1:
+            pytest.skip("Config requires too much shared memory")
     elif is_hip():
         if not (is_hip_cdna4() or is_hip_gfx1250()):
             pytest.skip("Scaled mxfp8 matmul is only natively supported on CDNA4 and above")
