@@ -1053,6 +1053,9 @@ def test_block_scale_fp4(M, N, K, BLOCK_M, BLOCK_N, BLOCK_K, VEC_SIZE, with_a_sc
     if is_cuda():
         if BLOCK_M < 128 and not pack_along_k:
             pytest.skip("Packing along M/N with BLOCK_M < 128 is not supported on CUDA")
+        if (not pack_along_k and BLOCK_N == 256 and BLOCK_K == 256
+                and torch.cuda.get_device_capability()[0] == 12):
+            pytest.skip("Decomposed path exceeds SMEM capacity on SM12x")
         if scale_type == "float8_e4m3fn" and VEC_SIZE == 32 and not is_rubin:
             pytest.skip("NVFP4 vec32 is only supported on Rubin")
         if scale_type == "float8_e4m3fn" and not pack_along_k:
@@ -1122,7 +1125,8 @@ def test_block_scale_fp4(M, N, K, BLOCK_M, BLOCK_N, BLOCK_K, VEC_SIZE, with_a_sc
     if is_hip_gfx1250() and not pack_along_k:
         assert "ds_load_tr4_b64" in k.asm["amdgcn"]
     torch.testing.assert_close(ref_out, output, atol=1e-3, rtol=1e-3)
-    nvfp4_fallback = BLOCK_M < 128
+    sm12_mn_packed_fp4 = is_cuda() and torch.cuda.get_device_capability()[0] == 12 and not pack_along_k
+    nvfp4_fallback = BLOCK_M < 128 or sm12_mn_packed_fp4
     if is_cuda() and torch.cuda.get_device_capability()[0] in (10, 12) and not nvfp4_fallback:
         ptx = k.asm["ptx"]
         if pack_along_k:
