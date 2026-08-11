@@ -37,7 +37,7 @@ Check your GPU model. Also make sure you have the latest GPU driver.
 
 * Blackwell only works with Triton >= 3.3, PyTorch >= 2.7, and CUDA >= 12.8
 * Support for Volta and Turing was dropped since Triton 3.3, see https://github.com/triton-lang/triton/pull/5066
-* If you want to help maintaining Turing in the latest Triton, you may port https://github.com/triton-lang/triton/pull/9970 to this repo
+* If you want to help maintaining Turing in the latest Triton, see https://github.com/triton-lang/triton-windows/issues/28
 * If you want to help with Pascal, see https://github.com/woct0rdho/triton-windows/issues/133 for the previous discussions, and open a new issue in this repo. It may be handled in a way similar to RDNA2
 * If you want to help with RDNA2, see https://github.com/triton-lang/triton-windows/issues/41
 
