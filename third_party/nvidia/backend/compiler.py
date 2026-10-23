@@ -1,8 +1,8 @@
-from triton.backends.compiler import BaseBackend, GPUTarget, Language
-from triton._C.libtriton import ir, passes, llvm, nvidia
-from triton import knobs
-from triton._instrumentation import instrument as _instrument, is_enabled
-from triton.runtime.errors import PTXASError
+from tokenspeed_triton.backends.compiler import BaseBackend, GPUTarget, Language
+from tokenspeed_triton._C.libtriton import ir, passes, llvm, nvidia
+from tokenspeed_triton import knobs
+from tokenspeed_triton._instrumentation import instrument as _instrument, is_enabled
+from tokenspeed_triton.runtime.errors import PTXASError
 
 from dataclasses import dataclass
 import functools
@@ -140,7 +140,7 @@ class CUDAOptions:
     ptx_version: int = None
     ptx_options: Optional[str] = knobs.nvidia.ptxas_options
     ir_override: Optional[str] = None  # filename of a user-defined IR (*.{ttir|ttgir|llir|ptx})
-    enable_fp_fusion: bool = False
+    enable_fp_fusion: bool = True
     sched4reg: bool = False
     # Disable LLVM loop strength reduction for this kernel's code generation.
     disable_lsr: bool = False
@@ -260,7 +260,8 @@ class CUDABackend(BaseBackend):
             if capability >= 90:
                 args["deprecated_fp8_dot_operand_dtypes"] = ("fp8e4b15", )
 
-        args["enable_fp_fusion"] = knobs.language.fp_fusion_enabled(args.get("enable_fp_fusion"))
+        if "enable_fp_fusion" not in args:
+            args["enable_fp_fusion"] = knobs.language.default_fp_fusion
 
         args["max_num_imprecise_acc_default"] = 2**30 if capability == 90 else 0
 
@@ -274,7 +275,7 @@ class CUDABackend(BaseBackend):
         )
 
     def get_codegen_implementation(self, options):
-        import triton.language.extra.cuda as cuda
+        import tokenspeed_triton.language.extra.cuda as cuda
         capability = int(self._parse_arch(options.arch))
         codegen_fns = {
             "convert_custom_types":
@@ -284,8 +285,8 @@ class CUDABackend(BaseBackend):
         return codegen_fns
 
     def get_module_map(self) -> Dict[str, ModuleType]:
-        from triton.language.extra.cuda import libdevice
-        return {"triton.language.extra.libdevice": libdevice}
+        from tokenspeed_triton.language.extra.cuda import libdevice
+        return {"tokenspeed_triton.language.extra.libdevice": libdevice}
 
     def load_dialects(self, ctx):
         nvidia.load_dialects(ctx)

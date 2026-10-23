@@ -6277,6 +6277,38 @@ def test_tma_store_block_shape_err(device):
     assert "Descriptor block shape must have at least 16 bytes" in str(e.value.__cause__)
 
 
+def test_trans_reshape(device, with_allocator):
+
+    @triton.jit
+    def kernel(in_base_ptr, out_base_ptr, IN_SHAPE0: tl.constexpr, IN_SHAPE1: tl.constexpr):
+
+        in_block_ptr = tl.make_block_ptr(
+            base=in_base_ptr,
+            shape=(IN_SHAPE0, IN_SHAPE1),
+            strides=(IN_SHAPE1, 1),
+            offsets=(0, 0),
+            block_shape=(IN_SHAPE0, IN_SHAPE1),
+            order=(1, 0),
+        )
+        x = tl.load(in_block_ptr)
+        x = tl.reshape(x, (32, 4, 4, 2))
+        x = tl.permute(x, (1, 2, 3, 0))
+        x = tl.reshape(x, (IN_SHAPE0 * IN_SHAPE1, ))
+        tl.store(out_base_ptr + tl.arange(0, IN_SHAPE0 * IN_SHAPE1), x)
+
+    shape = (32, 32)
+    input = torch.arange(math.prod(shape), dtype=torch.int32, device=device).reshape(shape)
+    expected = torch.permute(input, (1, 0))
+    # Don't do zeros_like -- that copies the layout, which we don't want.
+    actual = torch.zeros(expected.shape, dtype=torch.int32, device=device)
+
+    k = kernel[(1, )](input, actual, shape[0], shape[1])
+    assert k.asm['ttgir'].count(
+        'ttg.convert_layout') == 1, "Expected exactly one convert_layout op in the TTGIR after optimization"
+
+    np.testing.assert_equal(to_numpy(expected), to_numpy(actual))
+
+
 # -------------
 # test call
 # -------------
@@ -7307,8 +7339,7 @@ def test_dot_max_num_imprecise_acc(M, N, K, BLOCK_M, BLOCK_N, BLOCK_K, in_type_s
         torch.testing.assert_close(ref_out, C, rtol=1e-3, atol=1e-3)
     if is_hopper() and low_precision_acc > 0:
         # Hopper-specific workaround lower precision accumulator.
-        assert len(re.findall(r"add(?:\.rn)?\.f32",
-                              h.asm["ptx"])) == (BLOCK_M * BLOCK_N) // (32 * num_warps) * (BLOCK_K // low_precision_acc)
+        assert h.asm["ptx"].count("add.f32") == (BLOCK_M * BLOCK_N) // (32 * num_warps) * (BLOCK_K // low_precision_acc)
 
 
 # -----------------------
@@ -7318,8 +7349,7 @@ def test_dot_max_num_imprecise_acc(M, N, K, BLOCK_M, BLOCK_N, BLOCK_K, in_type_s
 
 @pytest.mark.parametrize("enable_fp_fusion", [False, True])
 @pytest.mark.parametrize("default_override", [False, True])
-@pytest.mark.parametrize("force_disable", [False, True])
-def test_enable_fp_fusion(enable_fp_fusion, default_override, force_disable, device, fresh_knobs):
+def test_enable_fp_fusion(enable_fp_fusion, default_override, device, fresh_knobs):
     # Sequential multiply add can be fused by backend
     @triton.jit
     def mul_add(data):
@@ -7327,7 +7357,6 @@ def test_enable_fp_fusion(enable_fp_fusion, default_override, force_disable, dev
         tl.store(ptrs, tl.load(ptrs) * 1.5 + 1.0)
 
     data = torch.randn((128, ), device=device, dtype=torch.float32)
-    fresh_knobs.language.force_disable_fp_fusion = force_disable
     if default_override:
         fresh_knobs.language.default_fp_fusion = enable_fp_fusion
         h = mul_add.warmup(data, grid=(1, ))
@@ -7337,27 +7366,7 @@ def test_enable_fp_fusion(enable_fp_fusion, default_override, force_disable, dev
     if not is_cuda():
         return
     found_fma = re.search(r'(mad|fma)\.r[nzmp]\.(ftz\.)?f32', h.asm["ptx"]) is not None
-    assert found_fma == (enable_fp_fusion and not force_disable)
-
-
-@pytest.mark.parametrize("explicit_fma", [False, True])
-@pytest.mark.parametrize("force_disable", [False, True])
-def test_force_disable_fp_fusion(explicit_fma, force_disable, device, fresh_knobs):
-
-    @triton.jit
-    def mul_add(x, y, z, out, EXPLICIT_FMA: tl.constexpr):
-        a, b, c = tl.load(x), tl.load(y), tl.load(z)
-        value = tl.fma(a, b, c) if EXPLICIT_FMA else a * b + c
-        tl.store(out, value)
-
-    x = torch.tensor([1 + 2**-23], device=device, dtype=torch.float32)
-    y = torch.tensor([1 - 2**-23], device=device, dtype=torch.float32)
-    z = torch.tensor([-1], device=device, dtype=torch.float32)
-    out = torch.empty_like(x)
-    fresh_knobs.language.force_disable_fp_fusion = force_disable
-    kernel = mul_add[(1, )](x, y, z, out, explicit_fma, enable_fp_fusion=True)
-    assert kernel.metadata.enable_fp_fusion == (not force_disable)
-    assert out.item() == (-2**-46 if explicit_fma or not force_disable else 0)
+    assert found_fma == enable_fp_fusion
 
 
 # -----------------------

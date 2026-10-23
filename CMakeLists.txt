@@ -353,6 +353,9 @@ if(TRITON_BUILD_PYTHON_MODULE)
 
   find_package(nanobind CONFIG REQUIRED HINTS "${Python3_SITELIB}")
   nanobind_build_library(nanobind-static)
+  # Isolate nanobind type registry from other nanobind extensions (e.g., the
+  # canonical triton wheel) so both can be loaded in the same process.
+  target_compile_definitions(nanobind-static PUBLIC NB_DOMAIN=tokenspeed)
   if(TRITON_STABLE_ABI)
     target_compile_definitions(nanobind-static PUBLIC Py_LIMITED_API=0x030C0000)
   endif()
@@ -443,7 +446,7 @@ if(TRITON_BUILD_PYTHON_MODULE)
                   ${PYTHON_SRC_PATH}/llvm.cc
                   ${PYTHON_SRC_PATH}/specialize.cc)
   if(TRITON_BUILD_NVIDIA_GSAN_RUNTIME)
-    list(APPEND TRITON_PYTHON_BINDING_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/python/triton/experimental/gsan/src/gsan_testing.cc)
+    list(APPEND TRITON_PYTHON_BINDING_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/python/tokenspeed_triton/experimental/gsan/src/gsan_testing.cc)
   endif()
   add_library(triton SHARED ${TRITON_PYTHON_BINDING_SRCS})
 

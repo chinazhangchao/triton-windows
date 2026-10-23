@@ -1,5 +1,5 @@
 import torch
-import triton.profiler as proton
+import tokenspeed_triton.profiler as proton
 import sys
 
 from helper_kernels import custom_add, matmul_kernel

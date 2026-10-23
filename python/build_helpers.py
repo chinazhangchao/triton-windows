@@ -642,6 +642,22 @@ def build_amd_codegen(amd_llvm_info: dict, helper_args: BuildHelperArgs):
         clangxx = os.path.join(llvm_path, "bin", "clang++")
         if os.path.isfile(clang) and os.path.isfile(clangxx):
             command.extend([f"-DCMAKE_C_COMPILER={clang}", f"-DCMAKE_CXX_COMPILER={clangxx}"])
+        shared_linker_flags = []
+        if check_env_flag("TRITON_BUILD_WITH_CLANG_LLD"):
+            command.extend([
+                "-DCMAKE_LINKER=lld",
+                "-DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld",
+                "-DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld",
+            ])
+            shared_linker_flags.extend(["-fuse-ld=lld", "-Wl,--gc-sections,--icf=safe"])
+        devtoolset_root = os.environ.get("DEVTOOLSET_ROOTPATH")
+        if devtoolset_root:
+            gcc_toolchain = os.path.join(devtoolset_root, "usr")
+            if os.path.isdir(gcc_toolchain):
+                command.append(f"-DCMAKE_CXX_FLAGS=--gcc-toolchain={gcc_toolchain}")
+                shared_linker_flags.extend(["-static-libstdc++", "-static-libgcc"])
+        if shared_linker_flags:
+            command.append(f"-DCMAKE_SHARED_LINKER_FLAGS={' '.join(shared_linker_flags)}")
     if sys.platform == "darwin":
         sdk = os.environ.get("SDKROOT", "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk")
         linker = "/Library/Developer/CommandLineTools/usr/bin/ld"
@@ -853,8 +869,12 @@ def download_and_copy_dependencies(helper_args: BuildHelperArgs):
     download_and_copy_amd_codegen(helper_args)
 
     is_windows = platform.system() == "Windows"
-    need_copy_all = (check_env_flag("TRITON_BUILD_PROTON", "ON") or check_env_flag("TRITON_BUILD_NVIDIA_GSAN_RUNTIME"))
+    need_copy_all = (not is_windows or check_env_flag("TRITON_BUILD_PROTON", "OFF")
+                     or check_env_flag("TRITON_BUILD_NVIDIA_GSAN_RUNTIME"))
     for package in get_nvidia_toolchain_packages(need_copy_all):
+        if (package.component == "cuda_cupti" and package.src_path == "lib"
+                and not check_env_flag("TRITON_BUILD_PROTON", "OFF")):
+            continue
         download_and_copy(
             name=package.name,
             src_func=lambda system, arch, version, package=package: package.source_path(system, arch),
@@ -871,7 +891,7 @@ def download_and_copy_dependencies(helper_args: BuildHelperArgs):
         download_and_copy(
             name=f"tcc/tcc-{tinycc_version}",
             src_func=lambda system, arch, version: ".",
-            dst_path="python/triton/runtime/tcc",
+            dst_path="python/tokenspeed_triton/runtime/tcc",
             override_path=None,
             version=tinycc_version,
             url_func=lambda system, arch, version:

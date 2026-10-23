@@ -34,7 +34,7 @@ test-cpp:
 
 .PHONY: test-unit
 test-unit: all
-	$(PYTHON) -m triton._test_runner suite unit --num-gpus $(NUM_GPUS) --num-procs $(NUM_PROCS)
+	$(PYTHON) -m tokenspeed_triton._test_runner suite unit --num-gpus $(NUM_GPUS) --num-procs $(NUM_PROCS)
 
 .PHONY: test-plugins
 test-plugins: all
@@ -42,19 +42,19 @@ test-plugins: all
 
 .PHONY: test-gluon
 test-gluon: all
-	$(PYTHON) -m triton._test_runner suite gluon --num-gpus $(NUM_GPUS) --num-procs $(NUM_PROCS)
+	$(PYTHON) -m tokenspeed_triton._test_runner suite gluon --num-gpus $(NUM_GPUS) --num-procs $(NUM_PROCS)
 
 .PHONY: test-warmup
 test-warmup: all
-	$(PYTHON) -m triton._test_runner warmup --warmup-procs $(WARMUP_PROCS)
+	$(PYTHON) -m tokenspeed_triton._test_runner warmup --warmup-procs $(WARMUP_PROCS)
 
 .PHONY: test-gsan
 test-gsan: all
-	$(PYTHON) -m triton._test_runner suite gsan --num-gpus $(NUM_GPUS) --num-procs $(NUM_PROCS)
+	$(PYTHON) -m tokenspeed_triton._test_runner suite gsan --num-gpus $(NUM_GPUS) --num-procs $(NUM_PROCS)
 
 .PHONY: test-regression
 test-regression: all
-	TRITON_CI_CACHE_PHASE=regression $(PYTEST) -p triton._compile_warmup -n $(NUM_PROCS) python/test/regression
+	TRITON_CI_CACHE_PHASE=regression $(PYTEST) -p tokenspeed_triton._compile_warmup -n $(NUM_PROCS) python/test/regression
 
 .PHONY: test-microbenchmark
 test-microbenchmark: all
@@ -63,7 +63,7 @@ test-microbenchmark: all
 .PHONY: test-interpret
 test-interpret: all
 	cd python/test/unit && TRITON_CI_CACHE_PHASE=interpreter TRITON_INTERPRET=1 $(PYTEST) -n 16 -m interpreter cuda language/test_core.py language/test_standard.py \
-		language/test_random.py language/test_subprocess.py language/test_line_info.py \
+		language/test_random.py language/test_block_pointer.py language/test_subprocess.py language/test_line_info.py \
 		language/test_tuple.py runtime/test_launch.py runtime/test_autotuner.py::test_kwargs[False] \
 		../../tutorials/06-fused-attention.py::test_op --device=cpu
 

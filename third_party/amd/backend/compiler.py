@@ -1,7 +1,7 @@
-from triton.backends.compiler import BaseBackend, GPUTarget, Language
-from triton._C.libtriton import ir, passes, llvm, amd
-from triton import knobs
-from triton._instrumentation import instrument as _instrument, is_enabled
+from tokenspeed_triton.backends.compiler import BaseBackend, GPUTarget, Language
+from tokenspeed_triton._C.libtriton import ir, passes, llvm, amd
+from tokenspeed_triton import knobs
+from tokenspeed_triton._instrumentation import instrument as _instrument, is_enabled
 from dataclasses import dataclass
 import ctypes
 from typing import Any, Dict, Tuple
@@ -260,7 +260,7 @@ class HIPOptions:
     deprecated_fp8_dot_operand_dtypes: Tuple[str] = ()
     default_dot_input_precision: str = "ieee"
     allowed_dot_input_precisions: Tuple[str] = ("ieee", 'bf16x3', 'bf16x6')
-    enable_fp_fusion: bool = False
+    enable_fp_fusion: bool = True
     launch_cooperative_grid: bool = False
     matrix_instr_nonkdim: int = 0
     kpack: int = 1
@@ -370,8 +370,9 @@ class HIPBackend(BaseBackend):
             deprecated_fp8_dot_operand_dtypes.update({"fp8e5b16", "fp8e4b8"})
             args["deprecated_fp8_dot_operand_dtypes"] = tuple(sorted(deprecated_fp8_dot_operand_dtypes))
 
+        if "enable_fp_fusion" not in opts:
+            args["enable_fp_fusion"] = knobs.language.default_fp_fusion
         args.update({k: opts[k] for k in HIPOptions.__dataclass_fields__.keys() if k in opts and opts[k] is not None})
-        args["enable_fp_fusion"] = knobs.language.fp_fusion_enabled(args.get("enable_fp_fusion"))
         return HIPOptions(**args)
 
     def pack_metadata(self, metadata):
@@ -385,9 +386,9 @@ class HIPBackend(BaseBackend):
         return {"min_dot_size": get_min_dot_size(self.target)}
 
     def get_module_map(self) -> Dict[str, ModuleType]:
-        from triton.language.extra.hip import libdevice
+        from tokenspeed_triton.language.extra.hip import libdevice
 
-        return {"triton.language.extra.libdevice": libdevice}
+        return {"tokenspeed_triton.language.extra.libdevice": libdevice}
 
     def load_dialects(self, ctx):
         amd.load_dialects(ctx)
