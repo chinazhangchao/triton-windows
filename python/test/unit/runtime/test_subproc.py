@@ -4,10 +4,11 @@ import shutil
 import time
 
 import pytest
-import triton
-import triton.language as tl
-from triton.compiler import ASTSource
-from triton._internal_testing import run_in_process, use_process_pool
+import torch  # noqa: F401 # TheRock ROCm requires importing torch before triton
+import tokenspeed_triton as triton
+import tokenspeed_triton.language as tl
+from tokenspeed_triton.compiler import ASTSource
+from tokenspeed_triton._internal_testing import run_in_process, use_process_pool
 
 target = triton.runtime.driver.active.get_current_target()
 start_method = 'fork' if 'fork' in multiprocessing.get_all_start_methods() else 'spawn'

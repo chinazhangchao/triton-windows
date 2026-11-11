@@ -1,11 +1,11 @@
 import math
 import pytest
 import torch
-import triton
-import triton.language as tl
-from triton.tools.mxfp import MXFP4Tensor, MXScaleTensor, fp8e8m0_to_float32
+import tokenspeed_triton as triton
+import tokenspeed_triton.language as tl
+from tokenspeed_triton.tools.mxfp import MXFP4Tensor, MXScaleTensor, fp8e8m0_to_float32
 import re
-from triton._internal_testing import is_compile_warmup, is_cuda, is_hip, is_hip_cdna3, is_hip_cdna4, is_hip_cdna, is_hip_cdna5, is_rubin, is_blackwell
+from tokenspeed_triton._internal_testing import is_compile_warmup, is_cuda, is_hip, is_hip_cdna3, is_hip_cdna4, is_hip_cdna, is_hip_cdna5, is_hip_rdna2, is_rubin, is_blackwell
 
 pytestmark = pytest.mark.enable_warmup
 
@@ -147,8 +147,6 @@ def test_simple_matmul(dtype_src_str, dtype_dst_str, BLOCK_M, BLOCK_N, BLOCK_K, 
         pytest.skip("tensorfloat32 is only supported on HIP CDNA3")
     if dtype_src_str == "float8e5" and BLOCK_K == 16:
         pytest.skip("Skipping cases small K for float8")
-    if dtype_src_str == "float8e5" and device == "cuda" and torch.cuda.get_device_capability()[0] < 9:
-        pytest.skip("Float8 requires compute capability >= 9")
     if (dtype_src_str == "float64") != (dtype_dst_str == "float64"):
         pytest.skip("Skipping unsupported case")
     if "float32" in dtype_src_str and dtype_dst_str == "float16":
@@ -172,6 +170,10 @@ def test_simple_matmul(dtype_src_str, dtype_dst_str, BLOCK_M, BLOCK_N, BLOCK_K, 
         dtype_src = getattr(torch, dtype_src_str)
         a = torch.randn(M, K, dtype=dtype_src, device=device)
         b = torch.randn(K, N, dtype=dtype_src, device=device)
+        if is_hip_rdna2() and dtype_dst_str == "float16":
+            # RDNA2 has no matrix cores, and float16 accumulator in FMA dot loses precision too fast
+            a *= 0.1
+            b *= 0.1
         A = a
         B = b
     dtype_dst = getattr(torch, dtype_dst_str)
@@ -199,7 +201,7 @@ def test_simple_matmul(dtype_src_str, dtype_dst_str, BLOCK_M, BLOCK_N, BLOCK_K, 
     # operations. (Pipeliner will add additional mma operation by peeling the prologue.)
     # This applies only if TCv5 MMA is used (M % 64 == 0 and N % 8 == 0) and
     # when MMA arguments loads are pipelined (N > 16)
-    if (device == "cuda" and torch.cuda.get_device_capability()[0] == 10 and NUM_STAGES > 1 and BLOCK_M % 64 == 0
+    if (is_cuda() and torch.cuda.get_device_capability()[0] == 10 and NUM_STAGES > 1 and BLOCK_M % 64 == 0
             and BLOCK_N % 8 == 0 and BLOCK_N > 16
             and not (precision == "ieee" and (dtype_src_str == "float32" or dtype_src_str == "float64"))):
         assert_mmav5_asm(k, expect_two_ctas=False, num_mma=2)
@@ -213,7 +215,7 @@ def test_simple_matmul(dtype_src_str, dtype_dst_str, BLOCK_M, BLOCK_N, BLOCK_K, 
     (2, 3, 64, False),
 ])
 def test_tma_matmul_mixed_consumers(num_ctas, num_stages, K, warp_specialize, device):
-    from triton.tools.tensor_descriptor import TensorDescriptor
+    from tokenspeed_triton.tools.tensor_descriptor import TensorDescriptor
 
     @triton.jit
     def kernel(A, B, C, X, K: tl.constexpr, BM: tl.constexpr, BN: tl.constexpr, BK: tl.constexpr,
@@ -256,7 +258,7 @@ def test_tma_matmul_mixed_consumers(num_ctas, num_stages, K, warp_specialize, de
 @pytest.mark.parametrize("transpose_b", [False, True])
 @pytest.mark.parametrize("num_ctas", [2, 4, 8])
 def test_tma_matmul_two_ctas(use_loop, num_stages, transpose_b, num_ctas, device):
-    from triton.tools.tensor_descriptor import TensorDescriptor
+    from tokenspeed_triton.tools.tensor_descriptor import TensorDescriptor
 
     @triton.jit
     def kernel(A, B, C, M: tl.constexpr, K: tl.constexpr, BM: tl.constexpr, USE_LOOP: tl.constexpr,
@@ -439,7 +441,7 @@ def test_simple_persistent_matmul(BLOCK_M, BLOCK_N, BLOCK_K, NUM_WARPS, DISALLOW
     # Make sure the mma is pipelined by checking if in the TTGIR we have peeled mmav5 ops.
     # This applies only if TCv5 MMA is used (M % 64 == 0 and N % 8 == 0) and
     # when MMA arguments loads are pipelined (N > 16)
-    if (device == "cuda" and torch.cuda.get_device_capability()[0] == 10 and BLOCK_M % 64 == 0 and BLOCK_N % 8 == 0
+    if (is_cuda() and torch.cuda.get_device_capability()[0] == 10 and BLOCK_M % 64 == 0 and BLOCK_N % 8 == 0
             and BLOCK_N > 16):
         ttgir = k.asm["ttgir"]
         pattern = "ttng.tc_gen5_mma"
@@ -1702,7 +1704,7 @@ def test_nvfp4_ue5m3_matmul():
 
 @pytest.mark.skipif(not is_blackwell(), reason="Requires Blackwell")
 def test_warp_specialized_matmul_auxiliary_output(device, fresh_compilation_knobs):
-    from triton.tools.tensor_descriptor import TensorDescriptor
+    from tokenspeed_triton.tools.tensor_descriptor import TensorDescriptor
 
     fresh_compilation_knobs.compilation.instrumentation_mode = "consan"
 

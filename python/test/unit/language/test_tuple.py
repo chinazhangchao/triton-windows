@@ -1,8 +1,8 @@
 import pytest
-import triton
-import triton.language as tl
-from typing import NamedTuple
 import torch
+import tokenspeed_triton as triton
+import tokenspeed_triton.language as tl
+from typing import NamedTuple
 
 
 @triton.jit

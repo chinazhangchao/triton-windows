@@ -1,7 +1,6 @@
-import triton
-import triton.language as tl
-
 import torch
+import tokenspeed_triton as triton
+import tokenspeed_triton.language as tl
 import math
 import subprocess
 import sys
@@ -12,7 +11,7 @@ _BLOCK_SIZE = 16
 
 
 def test_llvm_ir_to_bitcode():
-    from triton._C.libtriton import llvm
+    from tokenspeed_triton._C.libtriton import llvm
 
     bitcode = llvm.to_bitcode("define void @kernel() { ret void }")
     assert isinstance(bitcode, bytes)
@@ -21,7 +20,7 @@ def test_llvm_ir_to_bitcode():
 
 
 def test_llvm_ir_to_bitcode_reports_invalid_ir():
-    from triton._C.libtriton import llvm
+    from tokenspeed_triton._C.libtriton import llvm
 
     with pytest.raises(RuntimeError, match="failed to parse LLVM IR.*expected top-level entity"):
         llvm.to_bitcode("invalid LLVM IR")
@@ -33,7 +32,7 @@ def test_llvm_ir_to_bitcode_reports_invalid_ir():
 @pytest.mark.parametrize("triple", ["", "nvptx64-nvidia-cuda", "amdgcn-amd-amdhsa"])
 @pytest.mark.parametrize("dynamic_indices", [False, True])
 def test_nvptx_tti_vector_load_scalarization(dtype, num_elements, enable_nvptx_tti, triple, dynamic_indices, tmp_path):
-    from triton._C.libtriton import ir, llvm
+    from tokenspeed_triton._C.libtriton import ir, llvm
 
     vector_type = f"vector<{num_elements}x{dtype}>"
     instructions = [f"%v = llvm.load %p <alignment = 32> : !llvm.ptr<1> -> {vector_type}"]
@@ -86,8 +85,8 @@ def test_nvptx_tti_vector_load_scalarization(dtype, num_elements, enable_nvptx_t
 def test_binding_classes_released_at_shutdown():
     script = textwrap.dedent("""
         import os
-        from triton._C.libtriton import gluon_ir, ir
-        from triton.experimental.gluon.language import BlockedLayout
+        from tokenspeed_triton._C.libtriton import gluon_ir, ir
+        from tokenspeed_triton.experimental.gluon.language import BlockedLayout
 
         class ShutdownSentinel:
             def __init__(self, message):

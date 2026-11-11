@@ -6,6 +6,14 @@
 > us to avoid breaking PyTorch and `torch.compile`, while still be able to
 > move fast and leverage latest Triton functionality.
 
+This Windows release builds `tokenspeed-triton-windows==3.9.10.post20261028`
+from LightSeek's `release/3.9.10.post20261028` with the Windows port applied.
+Import it as `tokenspeed_triton`; the canonical `triton` package can remain
+installed. Do not install it alongside `tokenspeed-triton`, which provides
+the same import namespace. Windows x64 and ARM64 wheels target CPython 3.11 and regular
+CPython 3.12-3.14 (stable ABI), without the separately packaged Proton profiler.
+Python 3.15 is excluded because its headers are incompatible with the bundled TinyCC.
+
 | **`Documentation`** | **`Nightly Wheels`** |
 |-------------------- | -------------------- |
 | [![Documentation](https://github.com/triton-lang/triton/actions/workflows/documentation.yml/badge.svg)](https://triton-lang.org/) | [![Wheels](https://github.com/triton-lang/triton/actions/workflows/wheels.yml/badge.svg)](https://github.com/triton-lang/triton/actions/workflows/wheels.yml) |

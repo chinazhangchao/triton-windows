@@ -1,8 +1,8 @@
-import triton
-import triton.language as tl
+import torch
+import tokenspeed_triton as triton
+import tokenspeed_triton.language as tl
 
 import pytest
-import torch
 
 
 def is_hip():
@@ -305,7 +305,7 @@ def test_dag_matches_llvm(tmp_path, monkeypatch):
 
     # Compile only (no kernel launch): the MIR + scheduling DAG are dumped at
     # compile time, so this cross-check does not depend on a working GPU runtime.
-    from triton.compiler import ASTSource
+    from tokenspeed_triton.compiler import ASTSource
     src = ASTSource(
         fn=cc_kernel, signature={
             "a_ptr": "*fp32", "b_ptr": "*fp32", "c_ptr": "*fp32", "out_ptr": "*fp32", "n": "i32", "BLOCK": "constexpr"
@@ -350,8 +350,8 @@ def test_no_waitcnt_before_machine_scheduler(arch, tmp_path, monkeypatch):
 
     # Compile only: this inspects the compile-time MIR dump and must not depend
     # on a working GPU runtime for the architecture under test.
-    from triton.compiler import ASTSource
-    from triton.backends.compiler import GPUTarget
+    from tokenspeed_triton.compiler import ASTSource
+    from tokenspeed_triton.backends.compiler import GPUTarget
     src = ASTSource(fn=barrier_kernel,
                     signature={"a_ptr": "*fp32", "out_ptr": "*fp32", "n": "i32", "BLOCK":
                                "constexpr"}, constexprs={"BLOCK": 256})
@@ -398,7 +398,7 @@ def test_dag_regions_split_at_scheduling_boundaries(tmp_path, monkeypatch):
         a = tl.load(a_ptr + offs, mask=mask)
         tl.store(out_ptr + offs, a + 1, mask=mask)
 
-    from triton.compiler import ASTSource
+    from tokenspeed_triton.compiler import ASTSource
     triton.compile(
         ASTSource(fn=masked_kernel, signature={"a_ptr": "*fp32", "out_ptr": "*fp32", "n": "i32", "BLOCK": "constexpr"},
                   constexprs={"BLOCK": 256}))
@@ -510,8 +510,8 @@ def test_dag_region_bb_matches_mir_block(tmp_path, monkeypatch):
         tl.store(c_ptr + offs_m[:, None] * N + offs_n[None, :], acc)
 
     # Compile only, so this does not need a working runtime for the target.
-    from triton.compiler import ASTSource
-    from triton.backends.compiler import GPUTarget
+    from tokenspeed_triton.compiler import ASTSource
+    from tokenspeed_triton.backends.compiler import GPUTarget
     src = ASTSource(
         fn=blocky_kernel, signature={
             "a_ptr": "*fp16", "b_ptr": "*fp16", "c_ptr": "*fp32", "M": "i32", "N": "i32", "K": "i32", "BM": "constexpr",
@@ -669,9 +669,9 @@ def test_mir_swap_pipeline(tmp_path, monkeypatch):
 
 
 _SIMPLE_KERNEL_SCRIPT = '''
-import triton
-import triton.language as tl
 import torch
+import tokenspeed_triton as triton
+import tokenspeed_triton.language as tl
 
 @triton.jit
 def simple_kernel(x_ptr, output_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
@@ -884,9 +884,9 @@ def _extract_mc_around_sched(output_text):
 
 # Kernel script with enough independent operations for the scheduler to reorder
 _COMPLEX_KERNEL_SCRIPT = '''
-import triton
-import triton.language as tl
 import torch
+import tokenspeed_triton as triton
+import tokenspeed_triton.language as tl
 
 @triton.jit
 def complex_kernel(a_ptr, b_ptr, c_ptr, d_ptr, output_ptr, n_elements, BLOCK_SIZE: tl.constexpr):

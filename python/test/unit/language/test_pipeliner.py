@@ -2,10 +2,10 @@
 
 import pytest
 import torch
-import triton
-import triton.language as tl
+import tokenspeed_triton as triton
+import tokenspeed_triton.language as tl
 
-from triton._internal_testing import is_cuda, is_hopper_or_newer, is_hip_cdna, is_hip_cdna2, is_hip, is_hip_cdna5
+from tokenspeed_triton._internal_testing import is_cuda, is_hopper_or_newer, is_hip_cdna, is_hip_cdna2, is_hip_cdna5
 
 
 def check_capabilities():
@@ -261,7 +261,7 @@ def test_pipeline_matmul(scale, device):
     use_tma = not scale and is_hopper_or_newer()
 
     if use_tma:
-        from triton.tools.tensor_descriptor import TensorDescriptor
+        from tokenspeed_triton.tools.tensor_descriptor import TensorDescriptor
         a_tma = TensorDescriptor.from_tensor(a, block_shape=[BLOCK_M, BLOCK_K])
         b_tma = TensorDescriptor.from_tensor(b, block_shape=[BLOCK_K, BLOCK_N])
         output_tma = TensorDescriptor.from_tensor(output, block_shape=[BLOCK_M, BLOCK_N])
@@ -330,7 +330,7 @@ def test_tma_load_unaligned_stage_size(device):
     if not is_cuda() or not is_hopper_or_newer():
         pytest.skip("TMA requires Hopper or newer")
 
-    from triton.tools.tensor_descriptor import TensorDescriptor
+    from tokenspeed_triton.tools.tensor_descriptor import TensorDescriptor
 
     inp = torch.arange(12, dtype=torch.float32, device=device)
     output = torch.empty_like(inp)
@@ -450,8 +450,10 @@ def indirect_matmul_kernel(
 @pytest.mark.parametrize("BLOCK_M, BLOCK_N, BLOCK_K", [(128, 128, 128), (128, 128, 64), (128, 64, 128)])
 @pytest.mark.parametrize("num_stages", [1, 3, 5])
 def test_indirect_matmul(BLOCK_M, BLOCK_N, BLOCK_K, num_stages, device):
-    if (num_stages > 3 or (num_stages >= 3 and (BLOCK_M, BLOCK_N, BLOCK_K) == (128, 128, 128))) and is_hip():
-        pytest.skip("Not enough shared memory on HIP.")
+    shared_mem_accum = (BLOCK_K * BLOCK_M + BLOCK_K * BLOCK_N) * num_stages * 2
+    shared_mem_avail = triton.runtime.driver.active.utils.get_device_properties(0)["max_shared_mem"]
+    if shared_mem_accum > shared_mem_avail:
+        pytest.skip("Skipped due to insufficient shared memory on this GPU.")
     M = BLOCK_M
     N = BLOCK_N
 

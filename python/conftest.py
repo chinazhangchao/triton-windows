@@ -15,7 +15,7 @@ def device(request):
 
 @pytest.fixture(scope="module")
 def process_pool(request):
-    from triton._internal_testing import is_hopper_or_newer, use_process_pool
+    from tokenspeed_triton._internal_testing import is_hopper_or_newer, use_process_pool
 
     if request.config.getoption("--warmup-only", default=False) or os.environ.get("DISABLE_SUBPROCESS"):
         yield
@@ -29,18 +29,23 @@ def process_pool(request):
 
 @pytest.fixture
 def fresh_triton_cache():
-    with tempfile.TemporaryDirectory() as directory:
-        from triton import knobs
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            from tokenspeed_triton import knobs
 
-        with knobs.cache.scope(), knobs.runtime.scope():
-            knobs.cache.dir = directory
-            yield directory
+            with knobs.cache.scope(), knobs.runtime.scope():
+                knobs.cache.dir = directory
+                yield directory
+    except OSError:
+        # On Windows, the compiled binary may not be deleted when the temporary directory cleans up,
+        # because it is still loaded by the Python process.
+        pass
 
 
 @pytest.fixture
 def fresh_knobs():
-    from triton import knobs
-    from triton._internal_testing import _fresh_knobs_impl
+    from tokenspeed_triton import knobs
+    from tokenspeed_triton._internal_testing import _fresh_knobs_impl
 
     fresh, reset = _fresh_knobs_impl(skipped_attr={"build", "nvidia", "amd"})
     with knobs.amd.scope():
@@ -50,7 +55,7 @@ def fresh_knobs():
 
 @pytest.fixture
 def fresh_compilation_knobs():
-    from triton import knobs
+    from tokenspeed_triton import knobs
 
     with knobs.compilation.scope():
         yield knobs
@@ -58,7 +63,7 @@ def fresh_compilation_knobs():
 
 @pytest.fixture
 def fresh_knobs_including_libraries():
-    from triton._internal_testing import _fresh_knobs_impl
+    from tokenspeed_triton._internal_testing import _fresh_knobs_impl
 
     fresh, reset = _fresh_knobs_impl()
     yield fresh()

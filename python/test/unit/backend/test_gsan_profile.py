@@ -4,14 +4,18 @@ from functools import lru_cache
 import pytest
 import torch
 
-import triton
-import triton.language as tl
-from triton._internal_testing import is_blackwell, is_cuda, is_hopper_or_newer, run_in_process
-from triton.experimental import gluon
-from triton.experimental.gluon import language as gl
-from triton.experimental.gsan import create_mem_pool as create_race_mem_pool
-from triton.experimental.gsan.profile import AllocationProfile, is_installed
-from triton.tools.tensor_descriptor import TensorDescriptor
+import tokenspeed_triton as triton
+import tokenspeed_triton.language as tl
+from tokenspeed_triton._internal_testing import is_blackwell, is_cuda, is_hopper_or_newer, run_in_process
+from tokenspeed_triton.experimental import gluon
+from tokenspeed_triton.experimental.gluon import language as gl
+from tokenspeed_triton.tools.tensor_descriptor import TensorDescriptor
+
+try:
+    from tokenspeed_triton.experimental.gsan import create_mem_pool as create_race_mem_pool
+    from tokenspeed_triton.experimental.gsan.profile import AllocationProfile, is_installed
+except ImportError:
+    pytest.skip("GSan is not built in this configuration", allow_module_level=True)
 
 
 @pytest.fixture(autouse=True)
@@ -225,8 +229,8 @@ def test_gsan_profile_unmanaged_memory_is_ignored(register_unmanaged, fresh_knob
 
 
 def test_gsan_profile_unregistered_managed_memory_uses_shadow(fresh_knobs):
-    from triton.experimental.gsan import _profile_allocator as _allocator
-    from triton.experimental.gsan._utils import uint8_cuda_tensor_from_ptr
+    from tokenspeed_triton.experimental.gsan import _profile_allocator as _allocator
+    from tokenspeed_triton.experimental.gsan._utils import uint8_cuda_tensor_from_ptr
     with AllocationProfile() as profile:
         source = torch.empty(32, dtype=torch.int32, device="cuda")
         output = torch.empty_like(source)
@@ -236,7 +240,7 @@ def test_gsan_profile_unregistered_managed_memory_uses_shadow(fresh_knobs):
     # Registration selects report rows; it is not an instrumentation filter.
     _, _, shadow = _allocator.get_allocation_profile_layout(source.data_ptr())
     cell = uint8_cuda_tensor_from_ptr(shadow, 4, source.device.index).view(torch.int32).item()
-    from triton._C.libtriton import gsan_profile as layout
+    from tokenspeed_triton._C.libtriton import gsan_profile as layout
     assert cell & layout.WRITTEN_MASK == layout.WRITTEN_MASK
     assert cell & layout.READ
     assert cell & layout.WRITE
@@ -246,9 +250,9 @@ def test_gsan_profile_unregistered_managed_memory_uses_shadow(fresh_knobs):
 @pytest.mark.parametrize("granularity", [1, 2, 4, 8, 16])
 @pytest.mark.parametrize("write_once", [False, True])
 def test_gsan_profile_ignores_race_pools(granularity, write_once, fresh_knobs):
-    from triton.experimental.gsan import _allocator as race_allocator
-    from triton.experimental.gsan import _profile_allocator as _allocator
-    from triton.experimental.gsan._utils import uint8_cuda_tensor_from_ptr
+    from tokenspeed_triton.experimental.gsan import _allocator as race_allocator
+    from tokenspeed_triton.experimental.gsan import _profile_allocator as _allocator
+    from tokenspeed_triton.experimental.gsan._utils import uint8_cuda_tensor_from_ptr
     race_pool = create_race_mem_pool(shadow_granularity=granularity, write_once=write_once)
     with torch.cuda.use_mem_pool(race_pool):
         source = torch.empty(64, dtype=torch.uint8, device="cuda")
@@ -277,7 +281,7 @@ def test_gsan_profile_ignores_race_pools(granularity, write_once, fresh_knobs):
 
 
 def test_gsan_profile_pool_has_compact_metadata(fresh_knobs):
-    from triton.experimental.gsan import _allocator as race_allocator, _profile_allocator as allocator, profile
+    from tokenspeed_triton.experimental.gsan import _allocator as race_allocator, _profile_allocator as allocator, profile
     with AllocationProfile():
         output = torch.empty(1024, dtype=torch.int32, device="cuda")
         base, size, shadow, shadow_size = allocator.export_allocation_memhandle_regions(output.data_ptr())
@@ -293,7 +297,7 @@ def test_gsan_profile_pool_has_compact_metadata(fresh_knobs):
 
 def _check_allocator_lifetime_is_independent():
     import torch
-    from triton.experimental.gsan import _allocator as race, _profile_allocator as profile
+    from tokenspeed_triton.experimental.gsan import _allocator as race, _profile_allocator as profile
 
     device = torch.cuda.current_device()
     pointer = profile.malloc(4096, device)
@@ -331,8 +335,8 @@ def test_gsan_profile_allocator_lifetime_is_independent():
 
 @pytest.mark.parametrize("operation", ["tensor", "atomic", "tma", "tma_indexed", "tma_reduce"])
 def test_gsan_profile_pool_is_ignored_by_race_checker(operation, fresh_knobs, with_allocator):
-    from triton.experimental.gsan import _profile_allocator as _allocator
-    from triton.experimental.gsan._utils import uint8_cuda_tensor_from_ptr
+    from tokenspeed_triton.experimental.gsan import _profile_allocator as _allocator
+    from tokenspeed_triton.experimental.gsan._utils import uint8_cuda_tensor_from_ptr
     if operation.startswith("tma") and not is_hopper_or_newer():
         pytest.skip("TMA requires Hopper or newer")
     if operation == "tma_indexed" and not is_blackwell():
@@ -670,7 +674,7 @@ def test_gsan_profile_retirement_before_prepare(fresh_knobs):
 
 
 def test_gsan_profile_failed_allocator_reset_preserves_retirement(fresh_knobs):
-    from triton.experimental.gsan import profile as api
+    from tokenspeed_triton.experimental.gsan import profile as api
 
     with AllocationProfile():
         output = torch.empty(1024, dtype=torch.int32, device="cuda")
@@ -909,8 +913,8 @@ def test_gsan_profile_multiple_devices(fresh_knobs):
 def test_gsan_profile_peer_writes_share_shadow(overlap, fresh_knobs):
     from contextlib import ExitStack
     import os
-    from triton.experimental.gsan import _profile_allocator as _allocator
-    from triton.experimental.gsan._utils import uint8_cuda_tensor_from_ptr
+    from tokenspeed_triton.experimental.gsan import _profile_allocator as _allocator
+    from tokenspeed_triton.experimental.gsan._utils import uint8_cuda_tensor_from_ptr
 
     if not torch.cuda.can_device_access_peer(1, 0):
         pytest.skip("requires peer access")
@@ -967,7 +971,7 @@ def _distributed_checks(rank, world_size, init_method, backend, *, shared=False)
     store = dist.PrefixStore(f"gsan-profile/{backend}/{shared}/", store)
     dist.init_process_group(backend, rank=rank, world_size=world_size, store=store, timeout=timeout)
     import socket
-    from triton.experimental.gsan import _profile_allocator as _allocator
+    from tokenspeed_triton.experimental.gsan import _profile_allocator as _allocator
     hosts = [None] * world_size
     dist.all_gather_object(hosts, socket.gethostname())
     handle_type = (_allocator.ShareableHandleType.POSIX_FILE_DESCRIPTOR
@@ -1024,7 +1028,7 @@ def _distributed_checks(rank, world_size, init_method, backend, *, shared=False)
 
 @lru_cache(None)
 def _configure_profile_test_allocator(handle_type):
-    from triton.experimental.gsan import _profile_allocator
+    from tokenspeed_triton.experimental.gsan import _profile_allocator
     _profile_allocator.configure(handle_type=handle_type)
 
 
@@ -1086,8 +1090,8 @@ def _shared_profile_buffers(rank, world_size, *, cached=False):
     import os
     import socket
     import torch.distributed as dist
-    from triton.experimental.gsan import _profile_allocator as allocator
-    from triton.experimental.gsan._utils import uint8_cuda_tensor_from_ptr
+    from tokenspeed_triton.experimental.gsan import _profile_allocator as allocator
+    from tokenspeed_triton.experimental.gsan._utils import uint8_cuda_tensor_from_ptr
 
     hosts = [None] * world_size
     dist.all_gather_object(hosts, socket.gethostname())
@@ -1250,7 +1254,7 @@ def test_gsan_profile_distributed(backend, shared, fresh_knobs):
 
 def _distributed_worker(rank, init_method, backend, shared):
     # Explicit bootstrap: module import leaves CUDA and the allocator untouched.
-    from triton.experimental.gsan.profile import install_allocator
+    from tokenspeed_triton.experimental.gsan.profile import install_allocator
     install_allocator()
     _distributed_checks(rank, 2, init_method, backend, shared=shared)
 
@@ -1280,8 +1284,8 @@ def test_gsan_profile_wrong_launch_device(fresh_knobs):
 
 
 def test_gsan_profile_direct_allocator_scope_and_operation_outputs(fresh_knobs):
-    from triton.experimental.gsan import profile as api
-    from triton.experimental.gsan import _profile_allocator as allocator
+    from tokenspeed_triton.experimental.gsan import profile as api
+    from tokenspeed_triton.experimental.gsan import _profile_allocator as allocator
     from concurrent.futures import ThreadPoolExecutor
 
     api.install_allocator()  # Repeated installation is harmless after startup.
@@ -1309,8 +1313,8 @@ def test_gsan_profile_direct_allocator_scope_and_operation_outputs(fresh_knobs):
 @pytest.mark.parametrize("explicit_stream", [False, True])
 @pytest.mark.parametrize("free_inside", [False, True])
 def test_gsan_profile_raw_allocations_use_original_allocator(explicit_stream, free_inside, fresh_knobs):
-    from triton.experimental.gsan import _profile_allocator as allocator
-    from triton.experimental.gsan._utils import uint8_cuda_tensor_from_ptr
+    from tokenspeed_triton.experimental.gsan import _profile_allocator as allocator
+    from tokenspeed_triton.experimental.gsan._utils import uint8_cuda_tensor_from_ptr
 
     stream = torch.cuda.Stream() if explicit_stream else torch.cuda.current_stream()
     with ExitStack() as raw_lifetime:
@@ -1354,7 +1358,7 @@ def _check_import_does_not_install_allocator(cuda_initialized):
             patch.object(torch._C, "_cuda_init", side_effect=AssertionError("CUDA initialized")),
             patch("triton.runtime.build.compile_module_from_file", side_effect=AssertionError("native module loaded")),
     ):
-        from triton.experimental.gsan import profile
+        from tokenspeed_triton.experimental.gsan import profile
         # Multiprocessing already imported this test module and its dependencies.
         # Re-execute the profile module under the guards to test its import body.
         importlib.reload(profile)
@@ -1377,7 +1381,7 @@ def test_gsan_profile_import_does_not_install_allocator(cuda_initialized):
 
 def _check_native_allocator_registration_is_explicit():
     import torch
-    from triton.experimental.gsan import profile, _profile_allocator
+    from tokenspeed_triton.experimental.gsan import profile, _profile_allocator
 
     original = torch._C._cuda_getAllocator()
     module = _profile_allocator._load_module()
@@ -1407,7 +1411,7 @@ def test_gsan_profile_native_allocator_registration_is_explicit():
 
 def _check_direct_allocator_late_install_rejected():
     import torch
-    from triton.experimental.gsan.profile import install_allocator
+    from tokenspeed_triton.experimental.gsan.profile import install_allocator
     torch.cuda.init()
     try:
         install_allocator()
@@ -1423,7 +1427,7 @@ def test_gsan_profile_direct_allocator_late_install_rejected():
 
 
 def test_gsan_profile_direct_allocator_explicit_pool_and_coalescing(fresh_knobs):
-    from triton.experimental.gsan import _profile_allocator as allocator
+    from tokenspeed_triton.experimental.gsan import _profile_allocator as allocator
 
     torch.cuda.empty_cache()
     ordinary_pool = torch.cuda.MemPool()
@@ -1451,7 +1455,7 @@ def test_gsan_profile_direct_allocator_explicit_pool_and_coalescing(fresh_knobs)
 
 def _check_direct_allocator_reset_keeps_installation():
     import torch
-    from triton.experimental.gsan import profile
+    from tokenspeed_triton.experimental.gsan import profile
     profile.install_allocator()
     for _ in range(2):
         with profile.AllocationProfile():

@@ -2,14 +2,14 @@ import pytest
 import torch
 import numpy as np
 
-import triton
-import triton.language as tl
-from triton._internal_testing import is_hip_cdna5, is_hopper, is_sm12x, is_interpreter, numpy_random, to_triton, unwrap_tensor, tma_dtypes, to_numpy, run_in_process
-from triton.tools.mxfp import MXFP4Tensor, MXScaleTensor
+import tokenspeed_triton as triton
+import tokenspeed_triton.language as tl
+from tokenspeed_triton._internal_testing import is_hip_cdna5, is_hopper, is_sm12x, is_interpreter, numpy_random, to_triton, unwrap_tensor, tma_dtypes, to_numpy, run_in_process
+from tokenspeed_triton.tools.mxfp import MXFP4Tensor, MXScaleTensor
 from typing import Optional
-from triton._internal_testing import is_compile_warmup, is_cuda, is_hip, is_hip_cdna3
-from triton.tools.tensor_descriptor import TensorDescriptor
-from triton import CompilationError
+from tokenspeed_triton._internal_testing import is_compile_warmup, is_cuda, is_hip, is_hip_cdna3
+from tokenspeed_triton.tools.tensor_descriptor import TensorDescriptor
+from tokenspeed_triton import CompilationError
 
 
 @pytest.mark.interpreter
@@ -819,7 +819,8 @@ def batched_gemm_2d_tma_kernel(a_ptr, b_ptr, c_ptr,  #
 
 @pytest.mark.interpreter
 def test_tensor_descriptor_batched_gemm_2d_tma(device):
-    BLOCK_M, BLOCK_N, BLOCK_K = 128, 256, 64
+    # BLOCK_M, BLOCK_N, BLOCK_K = 128, 256, 64
+    BLOCK_M, BLOCK_N, BLOCK_K = 128, 128, 64
 
     if is_hip() or is_sm12x():
         # Insufficient shared memory for the larger block size on HIP and sm120
@@ -925,7 +926,8 @@ def batched_gemm_3d_tma_kernel(a_ptr, b_ptr, c_ptr,  #
 
 @pytest.mark.interpreter
 def test_tensor_descriptor_batched_gemm_3d_tma(device):
-    BLOCK_M, BLOCK_N, BLOCK_K = 128, 256, 64
+    # BLOCK_M, BLOCK_N, BLOCK_K = 128, 256, 64
+    BLOCK_M, BLOCK_N, BLOCK_K = 128, 128, 64
 
     if is_hip() or is_sm12x():
         # Insufficient shared memory for the larger block size on HIP and sm120

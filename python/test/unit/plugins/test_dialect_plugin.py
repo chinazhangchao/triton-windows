@@ -2,8 +2,9 @@ import os
 import subprocess
 import pathlib
 import pytest
+import torch  # noqa: F401 # TheRock ROCm requires importing torch before triton
 
-from triton._internal_testing import is_cuda, is_hip, is_hip_cdna2
+from tokenspeed_triton._internal_testing import is_cuda, is_hip, is_hip_cdna2
 
 pytestmark = pytest.mark.skipif(is_hip_cdna2(), reason="old AMD GPUs are not supported")
 

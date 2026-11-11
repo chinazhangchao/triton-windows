@@ -6,9 +6,9 @@ import os
 import numpy as np
 
 import torch
-import triton
-import triton.language as tl
-from triton._internal_testing import is_cuda, is_hip, run_in_process
+import tokenspeed_triton as triton
+import tokenspeed_triton.language as tl
+from tokenspeed_triton._internal_testing import is_cuda, is_hip, run_in_process
 
 
 def test_metadata() -> None:
@@ -78,7 +78,10 @@ def test_max_occupancy_launch(max_occupancy, num_warps, num_ctas, device, monkey
         if num_ctas == 1:
             # Check CUDA's occupancy calculation, independently of the reservation formula.
             # Match the runtime loader's driver selection, including CUDA compatibility libraries.
-            cuda = ctypes.CDLL("libcuda.so.1")
+            if os.name == "nt":
+                cuda = ctypes.WinDLL("nvcuda.dll")
+            else:
+                cuda = ctypes.CDLL("libcuda.so.1")
             occupancy = cuda.cuOccupancyMaxActiveBlocksPerMultiprocessor
             occupancy.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_void_p, ctypes.c_int, ctypes.c_size_t]
             occupancy.restype = ctypes.c_int
@@ -108,9 +111,9 @@ def test_max_occupancy_launch(max_occupancy, num_warps, num_ctas, device, monkey
 
 @pytest.mark.skipif(not is_cuda(), reason="max_occupancy requires CUDA")
 def test_max_occupancy_preserves_required_shared_memory(device):
-    from triton.experimental import gluon
-    from triton.experimental.gluon import language as gl
-    from triton.experimental.gluon.language.nvidia.ampere import async_copy
+    from tokenspeed_triton.experimental import gluon
+    from tokenspeed_triton.experimental.gluon import language as gl
+    from tokenspeed_triton.experimental.gluon.language.nvidia.ampere import async_copy
 
     if torch.cuda.get_device_capability()[0] < 8:
         pytest.skip("Async copy requires Ampere or newer")
@@ -332,7 +335,7 @@ def test_pre_run_hooks(device):
 
 
 def test_interpreter_implicit_cvt_bool() -> None:
-    from triton.runtime.interpreter import _implicit_cvt
+    from tokenspeed_triton.runtime.interpreter import _implicit_cvt
 
     value = _implicit_cvt(True)
 

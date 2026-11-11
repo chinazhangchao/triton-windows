@@ -1,3 +1,4 @@
+import torch
 import tokenspeed_triton as triton
 import tokenspeed_triton.language as tl
 
@@ -6,8 +7,6 @@ from tokenspeed_triton.knobs import CompileTimes
 from tokenspeed_triton.compiler.compiler import ASTSource, IRSource
 
 from typing import Any, Union
-
-import torch
 
 
 @triton.jit

@@ -1,10 +1,16 @@
+import os
+
 import pytest
 import torch
-import triton.language as tl
-import triton
-from triton._internal_testing import run_in_process
+import tokenspeed_triton.language as tl
+import tokenspeed_triton as triton
+from tokenspeed_triton._internal_testing import is_hip, is_interpreter, run_in_process
+from tokenspeed_triton.runtime.errors import InterpreterError
 
 pytestmark = pytest.mark.usefixtures("process_pool")
+
+if os.name == "nt":
+    pytest.skip("Device-side assertions are disabled on Windows by default", allow_module_level=True)
 
 
 def _run_device_assert(cond, mask, opt_flag, jit_flag, device):
@@ -130,10 +136,13 @@ def _run_overflow(x, y, x_dtype, y_dtype, debug, op, device):
 def _assert_overflow_result(result, debug, should_overflow, dtype, op):
     if should_overflow and debug:
         assert isinstance(result.exc, RuntimeError)
-        # CUDA can report a device assertion as an unspecified launch failure.
-        # Check the diagnostic as well so unrelated launch failures cannot pass.
-        assert any(msg in str(result.exc)
-                   for msg in ["device-side assert", "unspecified launch failure"]), str(result.exc)
+        if is_hip():
+            assert "hipErrorLaunchFailure" in str(result.exc)
+        else:
+            # CUDA can report a device assertion as an unspecified launch failure.
+            # Check the diagnostic as well so unrelated launch failures cannot pass.
+            assert any(msg in str(result.exc)
+                       for msg in ["device-side assert", "unspecified launch failure"]), str(result.exc)
         assert f"{dtype} overflow detected for operation {op}" in result.driver_stderr_output, result.driver_stderr_output
         return
 

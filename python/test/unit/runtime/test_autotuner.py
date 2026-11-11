@@ -1,11 +1,11 @@
 import torch
 
-import triton
-import triton.language as tl
+import tokenspeed_triton as triton
+import tokenspeed_triton.language as tl
 import pytest
 
 import pathlib
-from triton._internal_testing import is_cuda, is_hip_cdna2, is_rubin
+from tokenspeed_triton._internal_testing import is_cuda, is_hip_cdna2, is_rubin
 
 
 def do_bench(kernel_call, quantiles, use_cuda_graph=False):
@@ -620,7 +620,7 @@ $L__func_end0:
 
 
 def test_exceed_tmem(device):
-    if not torch.cuda.is_available() or not torch.cuda.get_device_capability()[0] == 10:
+    if not is_cuda() or not torch.cuda.get_device_capability()[0] == 10:
         pytest.skip("Test requires tensor memory.")
     N = 512
     dst = torch.empty((N, ), device=device, dtype=torch.float32)

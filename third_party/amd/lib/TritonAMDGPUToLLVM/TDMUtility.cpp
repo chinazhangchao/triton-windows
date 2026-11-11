@@ -555,7 +555,7 @@ SmallVector<Value> createTDMDescriptor(RewriterBase &rewriter, Location loc,
   Value globalAddr = b.ptrtoint(i64_ty, srcPtr);
   group0 = vecSet(b, group0, 2, b.trunc(i32_ty, globalAddr));
   Value g0_3 = b.trunc(i32_ty, b.lshr(globalAddr, v32));
-  g0_3 = b.or_(g0_3, b.i32_val(1 << 31));
+  g0_3 = b.or_(g0_3, b.i32_val(1U << 31));
   group0 = vecSet(b, group0, 3, g0_3);
 
   /* group1 bit-field definition:

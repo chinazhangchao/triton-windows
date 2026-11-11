@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import os
+import sys
 import tarfile
 import tempfile
 from pathlib import Path
@@ -96,6 +97,44 @@ def test_compile_module_bad_cache(fresh_knobs):
         assert mod.go("hello") == "hiya"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows bundled toolchain discovery")
+@pytest.mark.parametrize("arch", ["x64", "arm64"])
+def test_cuda_bundled_editable_install(monkeypatch, tmp_path, arch):
+    from tokenspeed_triton import windows_utils
+
+    package = tmp_path / "triton"
+    backend = package / "backends" / "nvidia"
+    for relative in ("bin/ptxas.exe", "include/cuda.h", f"lib/{arch}/cuda.lib"):
+        path = backend / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    monkeypatch.setattr(windows_utils, "__file__", str(package / "windows_utils.py"))
+    monkeypatch.setattr(windows_utils, "_arch_candidates", lambda: [arch])
+
+    assert windows_utils.find_cuda_bundled() == (str(backend / "bin"), [str(backend / "include")],
+                                                 [str(backend / "lib" / arch)])
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows bundled toolchain discovery")
+def test_tcc_bundled_editable_install(monkeypatch, tmp_path):
+    from tokenspeed_triton.runtime import build
+
+    runtime = tmp_path / "triton" / "runtime"
+    compiler = runtime / "tcc" / "tcc.exe"
+    compiler.parent.mkdir(parents=True)
+    compiler.touch()
+    monkeypatch.setattr(build, "__file__", str(runtime / "build.py"))
+    monkeypatch.setattr(build.sysconfig, "get_path", lambda name: str(tmp_path / "site-packages"))
+    monkeypatch.setattr(build, "find_msvc_winsdk", lambda **kwargs: (None, [], []))
+    monkeypatch.delenv("CC", raising=False)
+
+    build._find_compiler.cache_clear()
+    try:
+        assert build._find_compiler("c") == str(compiler)
+    finally:
+        build._find_compiler.cache_clear()
+
+
 @pytest.mark.parametrize("artifact", ["bootstrap", "codegen"])
 @pytest.mark.parametrize(
     "mirror", ["", "https://mirror.example/generic/oaiartifacts", "https://mirror.example/generic/oaiartifacts/"])
@@ -160,6 +199,7 @@ def test_amd_codegen_bootstrap_build_flags(monkeypatch, tmp_path):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3]))
     import build_helpers
 
+    monkeypatch.setattr(build_helpers.sys, "platform", "linux")
     llvm_path = tmp_path / "llvm"
     for path in [llvm_path / "bin" / "clang", llvm_path / "bin" / "clang++"]:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -191,3 +231,37 @@ def test_amd_codegen_bootstrap_build_flags(monkeypatch, tmp_path):
     assert ("-DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -Wl,--gc-sections,--icf=safe "
             "-static-libstdc++ -static-libgcc") in configure
     assert os.path.join(str(llvm_path), "bin", "clang") in " ".join(configure)
+
+
+@pytest.mark.parametrize("host, target, arch", [
+    ("AMD64", "arm64", "arm64"),
+    ("ARM64", "x64", "x64"),
+    ("AMD64", None, "x64"),
+])
+def test_windows_toolchains_follow_build_target(monkeypatch, tmp_path, host, target, arch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3]))
+    import build_helpers
+
+    monkeypatch.setattr(build_helpers.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(build_helpers.platform, "machine", lambda: host)
+    monkeypatch.setattr(build_helpers.sysconfig, "get_platform", lambda: "win-arm64" if host == "ARM64" else "win-amd64")
+    if target is None:
+        monkeypatch.delenv("VSCMD_ARG_TGT_ARCH", raising=False)
+    else:
+        monkeypatch.setenv("VSCMD_ARG_TGT_ARCH", target)
+    parser = argparse.ArgumentParser()
+    build_helpers.add_common_args(parser)
+    args = build_helpers.normalize_parsed_args(parser.parse_args(["--triton-cache-path", str(tmp_path)]))
+    assert build_helpers.get_llvm_system_suffix(args) == f"windows-{arch}"
+    wheel_arch = "arm64" if arch == "arm64" else "amd64"
+    assert build_helpers._get_cmake_dir().name.startswith(f"cmake.win-{wheel_arch}-")
+
+    downloads = []
+    monkeypatch.setattr(build_helpers, "download_and_copy_amd_codegen", lambda _: None)
+    monkeypatch.setattr(build_helpers, "download_and_copy", lambda **kwargs: downloads.append(kwargs))
+    monkeypatch.setenv("TRITON_BUILD_PROTON", "OFF")
+    monkeypatch.setenv("TRITON_BUILD_NVIDIA_GSAN_RUNTIME", "OFF")
+    build_helpers.download_and_copy_dependencies(args)
+    assert any(item["dst_path"].endswith(f"lib/{arch}/cuda.lib") for item in downloads)
+    tinycc = next(item for item in downloads if item["dst_path"].endswith("/runtime/tcc"))
+    assert tinycc["name"].endswith(f"-windows-{arch}")

@@ -14,7 +14,12 @@ from typing import Optional, Set, Union
 from dataclasses import dataclass
 from contextlib import contextmanager
 import pytest
-import resource
+
+try:
+    # The resource module is Unix-only
+    import resource
+except ImportError:
+    resource = None
 
 from tokenspeed_triton._compile_warmup_state import is_compile_warmup
 
@@ -33,6 +38,11 @@ torch_float8_dtypes = ['float8_e4m3fn', 'float8_e5m2']
 torch_dtypes = ['bool'] + int_dtypes + ['uint8'] + float_dtypes + ['bfloat16']
 tma_dtypes = sorted(set(dtypes_with_bfloat16) - {"int64", "uint64", "float64"})
 _PROCESS_POOL = None
+
+
+def _get_process_context():
+    start_method = "forkserver" if "forkserver" in multiprocessing.get_all_start_methods() else "spawn"
+    return multiprocessing.get_context(start_method)
 
 
 def is_interpreter():
@@ -132,6 +142,11 @@ def is_hip_cdna3():
 def is_hip_cdna4():
     target = get_current_target()
     return target is not None and target.backend == 'hip' and target.arch == 'gfx950'
+
+
+def is_hip_rdna2():
+    target = get_current_target()
+    return target is not None and target.backend == 'hip' and 'gfx103' in target.arch
 
 
 def is_hip_rdna3():
@@ -310,7 +325,8 @@ def _call_in_process(client_fn, args, kwargs, env, stderr_file, compilation_list
     # Avoid initializing the GPU driver before the callback's startup code.
     # The HIP build of PyTorch needs abort-on-device-assert disabled.
     if not is_interpreter() and torch.version.hip is not None:
-        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        if resource is not None:
+            resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
         os.environ["HIP_SKIP_ABORT_ON_GPU_ERROR"] = "1"
 
     # Capture driver/runtime writes to stderr that bypass Python's file objects.
@@ -366,7 +382,7 @@ class ReplenishingProcessPool:
     def __init__(self, preload_module):
         self.preload_module = preload_module
         self.triton_key = triton.runtime.cache.triton_key()
-        self.ctx = multiprocessing.get_context("forkserver")
+        self.ctx = _get_process_context()
         self.worker = None
         self.spare = None
 
@@ -446,7 +462,7 @@ def run_in_process(client_fn, args=(), kwargs=None, env=None):
     if kwargs is None:
         kwargs = {}
 
-    ctx = multiprocessing.get_context("forkserver")
+    ctx = _get_process_context()
     result_pipe, child_pipe = ctx.Pipe(duplex=False)
     with tempfile.TemporaryDirectory() as tmpdir:
         stderr_file = os.path.join(tmpdir, "err.log")
